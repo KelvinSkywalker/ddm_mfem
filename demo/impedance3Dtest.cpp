@@ -14,17 +14,23 @@ void ietaE_exact(const Vector &, Vector &);
 void f_exact(const Vector &, Vector &);
 void UnitNormal(const Vector &,Vector &);
 int dim;
-double freq=10.0;
-double kappa = freq*M_PI;
-double sigmaconst=-kappa*kappa;
-double eta=kappa;
-int main(int argc, char *argv[]){
+// double freq=10.0;
+// double kappa = freq*M_PI;
+int ref_levels,num_subdomain,delta;
+double kappa;
+double sigmaconst;
+double eta;
+int main(int argc, char** argv){
 	//1. set the mesh
 	int order = 1;
 	bool herm_conv = true;
-	int ref_levels =2; // if use twolevel, ref_level > = 1
-	int num_subdomain=8;
-	int delta=1;
+	ref_levels =  atoi(argv[1]); // if use twolevel, ref_level > = 1
+	kappa=atof(argv[2]);
+	num_subdomain=atoi(argv[3]);
+	delta=atoi(argv[4]);
+	sigmaconst=-kappa*kappa;
+	eta=kappa;
+	std::cout<<" argv is "<<ref_levels<<kappa<<num_subdomain<<delta<<std::endl;
 	#ifdef usetwolevel
 	Mesh *mesh_c = new Mesh("../../../mfem/mfem-4.7//data/beam-tet.mesh", 1, 1);
 	mesh_c->FinalizeMesh();

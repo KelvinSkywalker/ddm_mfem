@@ -12,16 +12,21 @@ static real_t omega_ = 10.0;
 static real_t k;
 static real_t epsilon;
 static real_t eta;
+void UnitNormal(const Vector &,Vector &);
+complex<real_t> u0_exact(const Vector &);
 real_t u0_real_exact(const Vector &);
 real_t u0_imag_exact(const Vector &);
 real_t f_real(const Vector &);
 real_t f_imag(const Vector &);
+complex<real_t> impedancedata(const Vector &);
+real_t g_real(const Vector &x);
+real_t g_imag(const Vector &x);
 
 void u1_real_exact(const Vector &, Vector &);
 void u1_imag_exact(const Vector &, Vector &);
-
 void u2_real_exact(const Vector &, Vector &);
 void u2_imag_exact(const Vector &, Vector &);
+
 
 bool check_for_inline_mesh(const char * mesh_file);
 
@@ -157,18 +162,23 @@ int main(int argc, char *argv[])
    if (mesh->bdr_attributes.Size())
    {
       ess_bdr.SetSize(mesh->bdr_attributes.Max());
-      ess_bdr = 1;
+      ess_bdr = 0;
       fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
    }
+   std::cout<<"Essential dofs "<<ess_tdof_list.Size()<<std::endl;
+   ess_tdof_list.Print(std::cout);
 
    // 7. Set up the linear form b(.) which corresponds to the right-hand side of
    //    the FEM linear system.
    FunctionCoefficient f_r(f_real);
    FunctionCoefficient f_i(f_imag);
+   FunctionCoefficient g_r(g_real);
+   FunctionCoefficient g_i(g_imag);
    ComplexLinearForm b(fespace, conv);
    b.AddDomainIntegrator(new DomainLFIntegrator(f_r),new DomainLFIntegrator(f_i));
-   //b.AddBoundaryIntegrator(new BoundaryLFIntegrator(g_r),new BoundaryLFIntegrator(g_i));
-   b.Vector::operator=(0.0);
+   b.AddBoundaryIntegrator(new BoundaryLFIntegrator(g_r),new BoundaryLFIntegrator(g_i));
+   //b.Vector::operator=(0.0);
+   b.Assemble();
 
    // 8. Define the solution vector u as a complex finite element grid function
    //    corresponding to fespace. Initialize u with initial guess of 1+0i or
@@ -257,11 +267,12 @@ int main(int argc, char *argv[])
    //    2) A vector H(Div) field
    //       -Grad(a Div) - omega^2 b + i omega c
    //
+   ConstantCoefficient zeros(0.0);
    ConstantCoefficient stiffnessCoef(1.0/mu_);
-   ConstantCoefficient massCoef(k * k);
-   ConstantCoefficient lossCoef(epsilon);
+   ConstantCoefficient massCoef(-k * k);
+   ConstantCoefficient lossCoef(-epsilon);
    ConstantCoefficient negMassCoef(omega_ * omega_ * epsilon_);
-   ConstantCoefficient bdconstant(eta);
+   ConstantCoefficient bdconstant(-eta);
    SesquilinearForm *a = new SesquilinearForm(fespace, conv);
    if (pa) { a->SetAssemblyLevel(AssemblyLevel::PARTIAL); }
    switch (prob)
@@ -270,8 +281,8 @@ int main(int argc, char *argv[])
          a->AddDomainIntegrator(new DiffusionIntegrator(stiffnessCoef),
                                 NULL);
          a->AddDomainIntegrator(new MassIntegrator(massCoef),
-                                new MassIntegrator(lossCoef));
-         //a->AddBoundaryIntegrator(NULL,new BoundaryMassIntegrator(bdconstant));
+                                new MassIntegrator(zeros));
+         a->AddBoundaryIntegrator(NULL,new BoundaryMassIntegrator(bdconstant));
          break;
       case 1:
          a->AddDomainIntegrator(new CurlCurlIntegrator(stiffnessCoef),
@@ -300,26 +311,29 @@ int main(int argc, char *argv[])
    //      2) A vector H(Div) field
    //         -Grad(a Div) - omega^2 b + omega c
    //
-   BilinearForm *pcOp = new BilinearForm(fespace);
+   SesquilinearForm *pcOp = new SesquilinearForm(fespace, conv);
    if (pa) { pcOp->SetAssemblyLevel(AssemblyLevel::PARTIAL); }
 
    switch (prob)
    {
       case 0:
-         pcOp->AddDomainIntegrator(new DiffusionIntegrator(stiffnessCoef));
-         pcOp->AddDomainIntegrator(new MassIntegrator(massCoef));
-         pcOp->AddDomainIntegrator(new MassIntegrator(lossCoef));
-         //pcOp->AddBoundaryIntegrator(NULL,new BoundaryMassIntegrator(bdconstant));
+         pcOp->AddDomainIntegrator(new DiffusionIntegrator(stiffnessCoef),
+                                NULL);
+         pcOp->AddDomainIntegrator(new MassIntegrator(massCoef),
+                                new MassIntegrator(lossCoef));
+         pcOp->AddBoundaryIntegrator(NULL,new BoundaryMassIntegrator(bdconstant));
          break;
       case 1:
-         pcOp->AddDomainIntegrator(new CurlCurlIntegrator(stiffnessCoef));
-         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(negMassCoef));
-         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(lossCoef));
+         pcOp->AddDomainIntegrator(new CurlCurlIntegrator(stiffnessCoef),
+                                NULL);
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(massCoef),
+                                new VectorFEMassIntegrator(lossCoef));
          break;
       case 2:
-         pcOp->AddDomainIntegrator(new DivDivIntegrator(stiffnessCoef));
-         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(massCoef));
-         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(lossCoef));
+         pcOp->AddDomainIntegrator(new DivDivIntegrator(stiffnessCoef),
+                                NULL);
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(massCoef),
+                                new VectorFEMassIntegrator(lossCoef));
          break;
       default: break; // This should be unreachable
    }
@@ -327,66 +341,40 @@ int main(int argc, char *argv[])
    // 10. Assemble the form and the corresponding linear system, applying any
    //     necessary transformations such as: assembly, eliminating boundary
    //     conditions, conforming constraints for non-conforming AMR, etc.
-   a->Assemble();
-   pcOp->Assemble();
+   a->Assemble(0);
+   pcOp->Assemble(0);
 
    OperatorHandle A;
    Vector B, U;
 
    a->FormLinearSystem(ess_tdof_list, u, b, A, U, B);
-
    cout << "Size of linear system: " << A->Width() << endl << endl;
-
    // 11. Define and apply a GMRES solver for AU=B with a block diagonal
    //     preconditioner based on the appropriate sparse smoother.
    {
-      Array<int> blockOffsets;
-      blockOffsets.SetSize(3);
-      blockOffsets[0] = 0;
-      blockOffsets[1] = A->Height() / 2;
-      blockOffsets[2] = A->Height() / 2;
-      blockOffsets.PartialSum();
-
-      BlockDiagonalPreconditioner BDP(blockOffsets);
-
-      Operator * pc_r = NULL;
-      Operator * pc_i = NULL;
-
-      if (pa)
-      {
-         pc_r = new OperatorJacobiSmoother(*pcOp, ess_tdof_list);
-      }
-      else
-      {
-         OperatorHandle PCOp;
-         pcOp->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
-         pcOp->FormSystemMatrix(ess_tdof_list, PCOp);
-         switch (prob)
-         {
-            case 0:
-               pc_r = new DSmoother(*PCOp.As<SparseMatrix>());
-               break;
-            case 1:
-               pc_r = new GSSmoother(*PCOp.As<SparseMatrix>());
-               break;
-            case 2:
-               pc_r = new DSmoother(*PCOp.As<SparseMatrix>());
-               break;
-            default:
-               break; // This should be unreachable
-         }
-      }
-      real_t s = (prob != 1) ? 1.0 : -1.0;
-      pc_i = new ScaledOperator(pc_r,
-                                (conv == ComplexOperator::HERMITIAN) ?
-                                s:-s);
-
-      BDP.SetDiagonalBlock(0, pc_r);
-      BDP.SetDiagonalBlock(1, pc_i);
-      BDP.owns_blocks = 1;
+      ComplexUMFPackSolver *preconditioner =new ComplexUMFPackSolver();
+      OperatorHandle PCOp;
+      pcOp->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
+      pcOp->FormSystemMatrix(ess_tdof_list, PCOp);
+      preconditioner->SetOperator(*PCOp.As<ComplexSparseMatrix>());
+      // switch (prob)
+      // {
+      //    case 0:
+      //       preconditioner = new DSmoother(*PCOp.As<ComplexSparseMatrix>());
+      //       break;
+      //    case 1:
+      //       preconditioner = new GSSmoother(*PCOp.As<ComplexSparseMatrix>());
+      //       break;
+      //    case 2:
+      //       preconditioner = new DSmoother(*PCOp.As<ComplexSparseMatrix>());
+      //       break;
+      //    default:
+      //       break; // This should be unreachable
+      // }
+      
 
       GMRESSolver gmres;
-      //gmres.SetPreconditioner(BDP);
+      gmres.SetPreconditioner(*preconditioner);
       gmres.SetOperator(*A.Ptr());
       gmres.SetRelTol(1e-12);
       gmres.SetMaxIter(1000);
@@ -545,7 +533,8 @@ complex<real_t> f(const Vector &x)
    complex<real_t> i(0.0, 1.0);
 //    complex<real_t> alpha = (epsilon_ * omega_ - i * sigma_);
 //    complex<real_t> kappa = std::sqrt(mu_ * omega_* alpha);
-   return epsilon*i*std::exp(-i * k * x[dim - 1]);
+//   return epsilon*i*std::exp(-i * k * x[dim - 1]);
+   return 0.0;
 }
 
 real_t f_real(const Vector &x)
@@ -580,4 +569,69 @@ void u2_imag_exact(const Vector &x, Vector &v)
 {
    int dim = x.Size();
    v.SetSize(dim); v = 0.0; v[dim-1] = u0_imag_exact(x);
+}
+
+complex<real_t> impedancedata(const Vector &x)
+{
+   complex<real_t> i(0.0, 1.0);
+   complex<real_t> g;
+   Vector n(x.Size());
+   UnitNormal(x,n);
+   g=-i*k*u0_exact(x)*n[2];
+   g+=-i*eta*u0_exact(x);
+   return g;
+}
+
+real_t g_real(const Vector &x)
+{
+   return impedancedata(x).real();
+}
+
+real_t g_imag(const Vector &x)
+{
+   return impedancedata(x).imag();
+}
+
+void UnitNormal(const Vector &x,Vector &f)
+{
+	if(x(1)==0)
+	{
+		f(0)=0;
+		f(1)=-1;
+		f(2)=0;
+	}
+	else if(x(1)==1)
+	{
+		f(0)=0;
+		f(1)=1;
+		f(2)=0;
+	}
+	else if(x(0)==0)
+	{
+		f(0)=-1;
+		f(1)=0;
+		f(2)=0;
+	}
+	else if(x(0)==1)
+	{
+		f(0)=1;
+		f(1)=0;
+		f(2)=0;
+	}
+	else if(x(2)==0)
+	{
+		f(0)=0;
+		f(1)=0;
+		f(2)=-1;
+	}
+	else if(x(2)==1)
+	{
+		f(0)=0;
+		f(1)=0;
+		f(2)=1;
+	}
+	else
+	{
+		f=0.0;
+	}
 }

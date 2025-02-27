@@ -41,6 +41,7 @@ int main(int argc, char *argv[])
    int ref_levels = 0;
    int order = 1;
    int prob = 0;
+   int numbasis = 10;
    real_t freq = -1.0;
    real_t a_coef = 0.0;
    bool visualization = 0;
@@ -85,6 +86,7 @@ int main(int argc, char *argv[])
    args.AddOption(&k,"-k","--k","Coefficient k of -(k^2+epsilon)u .");
    args.AddOption(&epsilon,"-e","--absorption","Coefficient epsilon of -(k^2+epsilon)u .");
    args.AddOption(&eta,"-eta","--eta","Coefficient eta of impedance BC .");
+   args.AddOption(&numbasis,"-nbasis","--numbasis","dimension of Krylov subspace");
    args.Parse();
    if (!args.Good())
    {
@@ -382,19 +384,24 @@ int main(int argc, char *argv[])
       gmres.SetPrintLevel(1);
       gmres.Mult(B, U);
 
-      Array<Vector * > basis(20);
-      for(int i=0;i<20;i++)
+      Array<Vector * > basis(numbasis);
+      for(int i=0;i<numbasis;i++)
       {
          basis[i]=new Vector(B.Size());
       }
       GMRESSolver_my gmres_my;
       gmres_my.SetPreconditioner(*preconditioner);
       gmres_my.SetOperator(*A.Ptr());
+      // gmres_my.SetMaxIter(numbasis-1);
+      // gmres_my.SetKDim(numbasis-1);
       gmres_my.SetRelTol(1e-12);
-      gmres_my.SetMaxIter(10);
-      gmres_my.SetKDim(10);
       gmres_my.SetPrintLevel(1);
-      gmres_my.generatebasis(B, U,basis,10);
+      gmres_my.generatebasis(B, U,basis,numbasis);
+      // for(int i=0;i<numbasis;i++)
+      // {
+      //    std::cout<<"basis "<<i<<std::endl;
+      //    basis[i]->Print(std::cout);
+      // }
    }
 
    // 12. Recover the solution as a finite element grid function and compute the

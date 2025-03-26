@@ -270,6 +270,7 @@ int main(int argc, char *argv[])
    //    2) A vector H(Div) field
    //       -Grad(a Div) - omega^2 b + i omega c
    //
+   ConstantCoefficient ones(1.0);
    ConstantCoefficient zeros(0.0);
    ConstantCoefficient stiffnessCoef(1.0/mu_);
    ConstantCoefficient massCoef(-k * k);
@@ -354,7 +355,7 @@ int main(int argc, char *argv[])
    cout << "Size of linear system: " << A->Width() << endl << endl;
    // 11. Define and apply a GMRES solver for AU=B with a block diagonal
    //     preconditioner based on the appropriate sparse smoother.
-   {
+   
       ComplexUMFPackSolver *preconditioner =new ComplexUMFPackSolver();
       OperatorHandle PCOp;
       pcOp->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
@@ -384,27 +385,104 @@ int main(int argc, char *argv[])
       gmres.SetPrintLevel(1);
       gmres.Mult(B, U);
 
-      Array<Vector * > basis(numbasis);
-      for(int i=0;i<numbasis;i++)
-      {
-         basis[i]=new Vector(B.Size());
-      }
-      GMRESSolver_my gmres_my;
-      gmres_my.SetPreconditioner(*preconditioner);
-      gmres_my.SetOperator(*A.Ptr());
-      // gmres_my.SetMaxIter(numbasis-1);
-      // gmres_my.SetKDim(numbasis-1);
-      gmres_my.SetRelTol(1e-12);
-      gmres_my.SetPrintLevel(1);
-      gmres_my.generatebasis(B, U,basis,numbasis);
-      // for(int i=0;i<numbasis;i++)
-      // {
-      //    std::cout<<"basis "<<i<<std::endl;
-      //    basis[i]->Print(std::cout);
-      // }
-   }
+   // 12.Construct Reduced basis solution
 
-   // 12. Recover the solution as a finite element grid function and compute the
+   Vector U_rbm(B.Size());
+   Array<Vector * > basis(numbasis);
+   for(int i=0;i<numbasis;i++)
+   {
+      basis[i]=new Vector(B.Size());
+   }
+   GMRESSolver_my gmres_my;
+   gmres_my.SetPreconditioner(*preconditioner);
+   gmres_my.SetOperator(*A.Ptr());
+   // gmres_my.SetMaxIter(numbasis-1);
+   // gmres_my.SetKDim(numbasis-1);
+   gmres_my.SetRelTol(1e-12);
+   gmres_my.SetPrintLevel(1);
+   gmres_my.generatebasis(B, U,basis,numbasis);
+   DenseMatrix *P_r = new DenseMatrix(B.Size()/2,numbasis);
+   DenseMatrix *P_i = new DenseMatrix(B.Size()/2,numbasis);
+   for(int i=0;i<numbasis;i++)
+   {
+      Vector temp_r(*basis[i],0,basis[i]->Size()/2);
+      Vector temp_i(*basis[i],basis[i]->Size()/2-1,basis[i]->Size()/2);
+      P_r->SetCol(i,temp_r);
+      P_i->SetCol(i,temp_i);
+   }
+   ComplexDenseMatrix P(P_r,P_i,0,0);
+   DenseMatrix M_r(fespace->GetNDofs());
+   DenseMatrix M_i(fespace->GetNDofs());
+   M_r = 0.0;
+   M_i = 0.0;
+   for(int i=0;i<fespace->GetNDofs();i++)
+   {
+      M_r(i,i)=1.0;
+   }
+   ComplexDenseMatrix *M = new ComplexDenseMatrix(&M_r,&M_i,0,0);
+   ////Assemble the mass matrix
+   // SesquilinearForm *mass = new SesquilinearForm(fespace, conv);
+   // if (pa) { mass->SetAssemblyLevel(AssemblyLevel::PARTIAL); }
+   // mass->AddDomainIntegrator(new MassIntegrator(ones),
+   // new MassIntegrator(zeros));
+   // mass->Assemble(0);
+   // OperatorHandle M;
+   // mass->FormSystemMatrix(ess_tdof_list, M);
+   // M.As<ComplexSparseMatrix>()->real().Print();
+   //compute the component
+   DenseMatrix *BAP_r= new DenseMatrix(B.Size()/2,numbasis);
+   DenseMatrix *BAP_i= new DenseMatrix(B.Size()/2,numbasis);
+   DenseMatrix BAPvec(B.Size(),numbasis);
+   for(int i=0;i<numbasis;i++)
+   {
+      Vector temp1(B.Size());
+      Vector temp2(B.Size());
+      A->Mult(*basis[i],temp1);
+      preconditioner->Mult(temp1,temp2);
+      BAPvec.SetCol(i,temp2);
+      Vector temp_r(temp2,0,temp2.Size()/2);
+      Vector temp_i(temp2,temp2.Size()/2-1,temp2.Size()/2);
+      BAP_r->SetCol(i,temp_r);
+      BAP_i->SetCol(i,temp_i);
+      BAPvec.SetCol(i,temp2);
+   }
+   ComplexDenseMatrix BAP(BAP_r,BAP_i,0,0);
+   DenseMatrix *BAPtMBAP_r = new DenseMatrix(numbasis,numbasis);
+   DenseMatrix *BAPtMBAP_i = new DenseMatrix(numbasis,numbasis);
+   for(int i=0;i<numbasis;i++)
+   {
+      Vector temp1(B.Size());
+      Vector temp2(B.Size());
+      Vector temp3(2*numbasis);
+      BAPvec.GetColumn(i,temp1);
+      M->Mult(temp1,temp2);
+      BAP.MultTranspose(temp2,temp3);
+      Vector temp_r(temp3,0,temp3.Size()/2);
+      Vector temp_i(temp3,temp3.Size()/2-1,temp3.Size()/2);
+      BAPtMBAP_r->SetCol(i,temp_r);
+      BAPtMBAP_i->SetCol(i,temp_i);
+   }
+   ComplexDenseMatrix BAPtMBAP(BAPtMBAP_r,BAPtMBAP_i,0,0);
+   ComplexDenseMatrix *BAPtMBAP_solve = BAPtMBAP.ComputeInverse();
+   //compute the solution = P[(BAP)^T M BAP]^{-1} BAP^T M B F ,
+   //where F is the right hand side, B is the preconditioner
+   Vector temp(B.Size());
+   Vector MBf(B.Size());
+   preconditioner->Mult(B,temp);
+   M->Mult(temp,MBf);
+   Vector BAPtMBf(2*numbasis);
+   BAP.MultTranspose(MBf,BAPtMBf);
+   Vector BAPtMBAP_solveBAPtMBf(2*numbasis);
+   BAPtMBAP_solve->Mult(BAPtMBf,BAPtMBAP_solveBAPtMBf);
+   P.Mult(BAPtMBAP_solveBAPtMBf,U_rbm);
+   //compute the error of the reduced basis solution
+   Vector U_rbm_error(U_rbm);
+   U_rbm_error-=U;
+   cout<<"The error of the reduced basis solution is "<<U_rbm_error.Norml2()<<endl;
+
+
+
+   // 13. Recover the solution as a finite element grid function and compute the
    //     errors if the exact solution is known.
    std::cout<<"Recovering solution"<<std::endl;
    a->RecoverFEMSolution(U, b, u);
@@ -436,7 +514,7 @@ int main(int argc, char *argv[])
       cout << endl;
    }
 
-   // 13. Save the refined mesh and the solution. This output can be viewed
+   // 14. Save the refined mesh and the solution. This output can be viewed
    //     later using GLVis: "glvis -m mesh -g sol".
    {
       ofstream mesh_ofs("refined.mesh");
@@ -451,7 +529,7 @@ int main(int argc, char *argv[])
       u.imag().Save(sol_i_ofs);
    }
 
-   // 14. Send the solution by socket to a GLVis server.
+   // 15. Send the solution by socket to a GLVis server.
    if (visualization)
    {
       char vishost[] = "localhost";
@@ -510,7 +588,7 @@ int main(int argc, char *argv[])
       }
    }
 
-   // 15. Free the used memory.
+   // 16. Free the used memory.
    delete a;
    delete u_exact;
    delete pcOp;
